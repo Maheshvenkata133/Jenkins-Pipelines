@@ -1,0 +1,63 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE = "maheshvenkata133/telugu-evolution:${BRANCH_NAME}-${BUILD_NUMBER}"
+        GIT_CREDENTIALS_ID = 'github-token'
+        DOCKER_CREDENTIALS_ID = 'dockerhub-creds'
+        REPO_URL = 'https://github.com/Maheshvenkata133/demo-k8s.git'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh 'docker build -t $IMAGE .'
+                }
+            }
+        }
+
+        stage('Push to Container Registry') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                        echo \$PASSWORD | docker login -u \$USERNAME --password-stdin
+                        docker push \$IMAGE
+                    """
+                }
+            }
+        }
+
+        stage('Update Deployment YAML') {
+            when {
+                not { branch 'PR-*' }
+            }
+            steps {
+                sh 'sed -i "s|image: .*|image: $IMAGE|" manifests/deployment.yaml'
+            }
+        }
+
+        stage('Commit & Push Updated YAML') {
+            when {
+                branch 'main'
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh '''
+                        git config user.email "jenkins@example.com"
+                        git config user.name "Jenkins CI"
+                        git add manifests/deployment.yaml
+                        git commit -m "Update image to $IMAGE" || echo "No changes to commit"
+                        git push https://${USERNAME}:${PASSWORD}@github.com/Maheshvenkata133/demo-k8s.git HEAD:$BRANCH_NAME
+                    '''
+                }
+            }
+        }
+    }
+}
